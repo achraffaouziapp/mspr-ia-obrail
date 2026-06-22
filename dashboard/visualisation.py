@@ -1,0 +1,1227 @@
+import os
+from pathlib import Path
+from typing import Optional
+
+import networkx as nx
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import psycopg2
+import streamlit as st
+from dotenv import load_dotenv
+
+
+# Prépare les chemins du projet et charge le fichier .env.
+# Le dashboard peut ainsi se connecter à PostgreSQL sans exposer les identifiants dans le code.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT_DIR / ".env")
+
+
+# Paramètres de connexion PostgreSQL.
+# Les valeurs par défaut correspondent à la configuration Docker utilisée pendant le projet.
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", 5432)),
+    "dbname": os.getenv("DB_NAME", "obrail"),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "postgres"),
+}
+
+
+def get_connection():
+    """
+    Ouvre une connexion PostgreSQL pour le dashboard.
+
+    Cette fonction est utilisée par toutes les requêtes SQL de visualisation.
+    """
+    return psycopg2.connect(**DB_CONFIG)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def run_query(query: str, params: tuple = ()) -> pd.DataFrame:
+    """
+    Exécute une requête SQL et retourne le résultat dans un DataFrame pandas.
+
+    Le cache Streamlit évite de relancer exactement la même requête à chaque
+    interaction utilisateur. Cela rend le dashboard plus rapide et plus fluide.
+    """
+    connection = get_connection()
+    try:
+        return pd.read_sql(query, connection, params=params)
+    finally:
+        connection.close()
+
+
+def format_int(value) -> str:
+    """
+    Formate un entier avec des espaces pour améliorer la lisibilité.
+
+    Exemple : 50983 devient 50 983.
+    """
+    if pd.isna(value):
+        return "0"
+    return f"{int(value):,}".replace(",", " ")
+
+
+def format_float(value, digits: int = 2) -> str:
+    """
+    Formate un nombre décimal avec un nombre fixe de chiffres après la virgule.
+    """
+    if pd.isna(value):
+        return "0.00"
+    return f"{float(value):.{digits}f}"
+
+
+def test_database_connection() -> bool:
+    """
+    Vérifie que la base PostgreSQL répond correctement.
+
+    Le dashboard utilise cette fonction au démarrage pour éviter d'afficher des
+    graphiques vides si la base n'est pas lancée.
+    """
+    df = run_query("SELECT 1 AS status;")
+    return not df.empty
+
+
+def load_global_kpis() -> pd.DataFrame:
+    """
+    Charge les indicateurs principaux affichés en haut du dashboard.
+
+    Cette requête récupère les volumes globaux : trajets, gares, routes, arrêts,
+    anomalies qualité, score moyen et complétude des coordonnées GPS.
+    """
+    query = """
+        SELECT
+            (SELECT COUNT(*) FROM trip) AS total_trips,
+            (SELECT COUNT(*) FROM station) AS total_stations,
+            (SELECT COUNT(*) FROM route) AS total_routes,
+            (SELECT COUNT(*) FROM trip_stop) AS total_trip_stops,
+            (
+                SELECT COUNT(*)
+                FROM quality_check
+                WHERE has_missing_values = TRUE
+                   OR has_time_error = TRUE
+                   OR is_duplicate = TRUE
+            ) AS total_anomalies,
+            (
+                SELECT ROUND(AVG(quality_score), 2)
+                FROM quality_check
+            ) AS avg_quality_score,
+            (
+                SELECT ROUND(
+                    100.0 * SUM(
+                        CASE
+                            WHEN latitude IS NOT NULL
+                             AND longitude IS NOT NULL
+                            THEN 1 ELSE 0
+                        END
+                    ) / COUNT(*),
+                    2
+                )
+                FROM station
+            ) AS coordinate_completion_rate;
+    """
+    return run_query(query)
+
+
+def load_train_type_options() -> pd.DataFrame:
+    """
+    Charge la liste des types de train disponibles pour le filtre latéral.
+    """
+    return run_query("""
+        SELECT type_name
+        FROM train_type
+        ORDER BY type_name;
+    """)
+
+
+def load_source_options() -> pd.DataFrame:
+    """
+    Charge la liste des sources de données disponibles pour le filtre latéral.
+    """
+    return run_query("""
+        SELECT data_source_id, source_name
+        FROM data_source
+        ORDER BY data_source_id;
+    """)
+
+
+def load_source_stats() -> pd.DataFrame:
+    """
+    Calcule le nombre de trajets par source de données.
+
+    Ce résultat alimente le graphique qui compare le poids des différentes sources
+    dans l'entrepôt PostgreSQL.
+    """
+    query = """
+        SELECT
+            ds.source_name,
+            ds.source_format,
+            COUNT(t.trip_id)::INTEGER AS total_trips
+        FROM trip t
+        JOIN data_source ds
+            ON t.data_source_id = ds.data_source_id
+        GROUP BY ds.source_name, ds.source_format
+        ORDER BY total_trips DESC;
+    """
+
+    df = run_query(query)
+    df["total_trips"] = pd.to_numeric(df["total_trips"], errors="coerce").fillna(0)
+
+    return df
+
+
+def load_train_type_stats() -> pd.DataFrame:
+    """
+    Calcule le nombre de trajets pour chaque type de train.
+
+    Cette fonction permet de comparer les volumes de trains de jour et de nuit.
+    """
+    query = """
+        SELECT
+            tt.type_name,
+            COUNT(t.trip_id)::INTEGER AS total_trips
+        FROM trip t
+        JOIN train_type tt
+            ON t.train_type_id = tt.train_type_id
+        GROUP BY tt.type_name
+        ORDER BY total_trips DESC;
+    """
+
+    df = run_query(query)
+    df["total_trips"] = pd.to_numeric(df["total_trips"], errors="coerce").fillna(0)
+
+    return df
+
+
+def load_stations_by_country() -> pd.DataFrame:
+    """
+    Calcule le nombre de gares par pays.
+
+    Ce résultat permet d'analyser la couverture géographique des données chargées.
+    """
+    return run_query("""
+        SELECT
+            c.country_name,
+            c.country_code,
+            COUNT(s.station_id) AS total_stations
+        FROM station s
+        JOIN city ci
+            ON s.city_id = ci.city_id
+        JOIN country c
+            ON ci.country_id = c.country_id
+        GROUP BY c.country_name, c.country_code
+        ORDER BY total_stations DESC;
+    """)
+
+
+def load_top_operators(limit: int = 15) -> pd.DataFrame:
+    """
+    Charge les opérateurs ferroviaires les plus représentés en nombre de trajets.
+
+    Les opérateurs sont gardés avec leurs libellés d'origine afin de conserver la
+    traçabilité des sources.
+    """
+    return run_query("""
+        SELECT
+            o.operator_name,
+            o.operator_code,
+            COUNT(t.trip_id) AS total_trips
+        FROM trip t
+        JOIN route r
+            ON t.route_id = r.route_id
+        JOIN "operator" o
+            ON r.operator_id = o.operator_id
+        GROUP BY o.operator_name, o.operator_code
+        ORDER BY total_trips DESC
+        LIMIT %s;
+    """, (limit,))
+
+
+def load_operator_data_volume(limit: int = 15) -> pd.DataFrame:
+    """
+    Calcule le volume de données collectées par opérateur.
+
+    Le volume est estimé à partir :
+    - du nombre de trajets associés à chaque opérateur ;
+    - du nombre d'arrêts collectés pour ces trajets.
+
+    Cela permet d'identifier les opérateurs les plus représentés
+    dans la base ObRail.
+    """
+    query = """
+        SELECT
+            COALESCE(NULLIF(o.operator_name, ''), 'Opérateur inconnu') AS operator_name,
+            COUNT(DISTINCT t.trip_id) AS total_trips,
+            COUNT(ts.trip_id) AS total_stops,
+            COUNT(DISTINCT t.trip_id) + COUNT(ts.trip_id) AS total_records
+        FROM trip t
+        JOIN route r
+            ON t.route_id = r.route_id
+        LEFT JOIN "operator" o
+            ON r.operator_id = o.operator_id
+        LEFT JOIN trip_stop ts
+            ON t.trip_id = ts.trip_id
+        GROUP BY operator_name
+        ORDER BY total_records DESC
+        LIMIT %s;
+    """
+
+    return run_query(query, (limit,))
+
+
+def load_missing_values_rate() -> pd.DataFrame:
+    """
+    Calcule le taux de valeurs manquantes pour chaque colonne
+    des principales tables du modèle relationnel.
+
+    Une valeur est considérée comme manquante si elle est NULL
+    ou si elle correspond à une chaîne vide.
+    """
+    tables = [
+        "country",
+        "city",
+        "station",
+        "operator",
+        "train_type",
+        "data_source",
+        "route",
+        "trip",
+        "trip_stop",
+        "quality_check",
+    ]
+
+    tables_sql = ", ".join([f"'{table}'" for table in tables])
+
+    columns_query = f"""
+        SELECT
+            table_name,
+            column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ({tables_sql})
+        ORDER BY table_name, ordinal_position;
+    """
+
+    columns_df = run_query(columns_query)
+
+    results = []
+
+    for _, row in columns_df.iterrows():
+        table_name = row["table_name"]
+        column_name = row["column_name"]
+
+        query = f"""
+            SELECT
+                COUNT(*) AS total_rows,
+                SUM(
+                    CASE
+                        WHEN "{column_name}" IS NULL
+                          OR NULLIF(TRIM(CAST("{column_name}" AS TEXT)), '') IS NULL
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS missing_rows
+            FROM "{table_name}";
+        """
+
+        stat_df = run_query(query)
+
+        if stat_df.empty:
+            continue
+
+        total_rows = int(stat_df.loc[0, "total_rows"] or 0)
+        missing_rows = int(stat_df.loc[0, "missing_rows"] or 0)
+
+        missing_rate = 0
+        if total_rows > 0:
+            missing_rate = round((missing_rows / total_rows) * 100, 2)
+
+        results.append({
+            "table_name": table_name,
+            "column_name": column_name,
+            "total_rows": total_rows,
+            "missing_rows": missing_rows,
+            "missing_rate_pct": missing_rate,
+        })
+
+    df = pd.DataFrame(results)
+
+    if df.empty:
+        return df
+
+    return df.sort_values(
+        by=["missing_rate_pct", "missing_rows"],
+        ascending=False
+    )
+
+
+
+def load_source_train_type_counts() -> pd.DataFrame:
+    """
+    Calcule le croisement entre source de données et type de train.
+
+    Ce résultat est utilisé par le Sunburst pour montrer quelle source alimente
+    quelle catégorie de train.
+    """
+    return run_query("""
+        SELECT
+            ds.source_name,
+            tt.type_name,
+            COUNT(t.trip_id) AS total_trips
+        FROM trip t
+        JOIN data_source ds
+            ON t.data_source_id = ds.data_source_id
+        JOIN train_type tt
+            ON t.train_type_id = tt.train_type_id
+        GROUP BY ds.source_name, tt.type_name
+        ORDER BY ds.source_name, tt.type_name;
+    """)
+
+def load_co2_comparison_by_train_type() -> pd.DataFrame:
+    """
+    Calcule une estimation comparative des émissions CO₂ par type de train.
+
+    La distance est estimée à partir des coordonnées GPS des gares de départ
+    et d'arrivée. Cette estimation permet de comparer les émissions d'un trajet
+    réalisé en train avec une hypothèse équivalente en avion.
+
+    Hypothèses utilisées :
+    - train : 6,7 gCO₂e par km
+    - avion : 83 gCO₂ par km
+
+    Ces valeurs servent uniquement à produire un indicateur pédagogique
+    pour comparer les ordres de grandeur.
+    """
+    query = """
+        WITH trip_distances AS (
+            SELECT
+                tt.type_name,
+                t.trip_id,
+                6371 * 2 * ASIN(
+                    SQRT(
+                        POWER(SIN(RADIANS((arr.latitude - dep.latitude) / 2)), 2)
+                        + COS(RADIANS(dep.latitude))
+                        * COS(RADIANS(arr.latitude))
+                        * POWER(SIN(RADIANS((arr.longitude - dep.longitude) / 2)), 2)
+                    )
+                ) AS distance_km
+            FROM trip t
+            JOIN train_type tt
+                ON t.train_type_id = tt.train_type_id
+            JOIN route r
+                ON t.route_id = r.route_id
+            JOIN station dep
+                ON r.departure_station_id = dep.station_id
+            JOIN station arr
+                ON r.arrival_station_id = arr.station_id
+            WHERE dep.latitude IS NOT NULL
+              AND dep.longitude IS NOT NULL
+              AND arr.latitude IS NOT NULL
+              AND arr.longitude IS NOT NULL
+              AND dep.station_id <> arr.station_id
+        )
+        SELECT
+            type_name,
+            COUNT(*) AS total_trips,
+            ROUND(SUM(distance_km)::numeric, 2) AS total_distance_km,
+            ROUND((SUM(distance_km) * 0.0067)::numeric, 2) AS train_co2_kg,
+            ROUND((SUM(distance_km) * 0.083)::numeric, 2) AS plane_co2_kg,
+            ROUND((SUM(distance_km) * (0.083 - 0.0067))::numeric, 2) AS avoided_co2_kg
+        FROM trip_distances
+        GROUP BY type_name
+        ORDER BY avoided_co2_kg DESC;
+    """
+
+    return run_query(query)
+
+
+def load_quality_stats() -> pd.DataFrame:
+    """
+    Charge les statistiques qualité globales.
+
+    Cette fonction est conservée pour une éventuelle réactivation d'une page
+    qualité dans une version future du dashboard.
+    """
+    return run_query("""
+        SELECT
+            COUNT(*) AS total_checks,
+            SUM(CASE WHEN has_missing_values THEN 1 ELSE 0 END) AS trips_with_missing_values,
+            SUM(CASE WHEN has_time_error THEN 1 ELSE 0 END) AS trips_with_time_error,
+            SUM(CASE WHEN is_duplicate THEN 1 ELSE 0 END) AS duplicated_trips,
+            ROUND(AVG(quality_score), 2) AS avg_quality_score,
+            MIN(quality_score) AS min_quality_score,
+            MAX(quality_score) AS max_quality_score
+        FROM quality_check;
+    """)
+
+
+def load_quality_by_source() -> pd.DataFrame:
+    """
+    Calcule les indicateurs qualité par source de données.
+
+    La fonction reste disponible si l'on souhaite remettre une analyse qualité
+    détaillée dans le dashboard.
+    """
+    return run_query("""
+        SELECT
+            ds.source_name,
+            COUNT(t.trip_id) AS total_trips,
+            ROUND(AVG(q.quality_score), 2) AS avg_quality_score,
+            ROUND(100.0 * SUM(CASE WHEN q.has_missing_values THEN 1 ELSE 0 END) / COUNT(*), 2) AS missing_rate,
+            ROUND(100.0 * SUM(CASE WHEN q.has_time_error THEN 1 ELSE 0 END) / COUNT(*), 2) AS time_error_rate,
+            ROUND(100.0 * SUM(CASE WHEN q.is_duplicate THEN 1 ELSE 0 END) / COUNT(*), 2) AS duplicate_rate
+        FROM trip t
+        JOIN data_source ds
+            ON t.data_source_id = ds.data_source_id
+        JOIN quality_check q
+            ON t.trip_id = q.trip_id
+        GROUP BY ds.source_name
+        ORDER BY ds.source_name;
+    """)
+
+
+def load_quality_by_source_and_type() -> pd.DataFrame:
+    """
+    Calcule le score qualité moyen par source et par type de train.
+    """
+    return run_query("""
+        SELECT
+            ds.source_name,
+            tt.type_name,
+            ROUND(AVG(q.quality_score), 2) AS avg_quality_score
+        FROM trip t
+        JOIN data_source ds
+            ON t.data_source_id = ds.data_source_id
+        JOIN train_type tt
+            ON t.train_type_id = tt.train_type_id
+        JOIN quality_check q
+            ON t.trip_id = q.trip_id
+        GROUP BY ds.source_name, tt.type_name
+        ORDER BY ds.source_name, tt.type_name;
+    """)
+
+
+def load_anomalies(selected_train_type: str = "Tous", selected_source_id: Optional[int] = None, limit: int = 100) -> pd.DataFrame:
+    """
+    Charge les trajets qui présentent une anomalie qualité.
+
+    Les filtres permettent de limiter les anomalies à un type de train ou à une
+    source précise.
+    """
+    conditions = [
+        """
+        (
+            q.has_missing_values = TRUE
+            OR q.has_time_error = TRUE
+            OR q.is_duplicate = TRUE
+        )
+        """
+    ]
+    params = []
+
+    if selected_train_type != "Tous":
+        conditions.append("LOWER(tt.type_name) = LOWER(%s)")
+        params.append(selected_train_type)
+
+    if selected_source_id is not None:
+        conditions.append("ds.data_source_id = %s")
+        params.append(selected_source_id)
+
+    where_clause = "WHERE " + " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            q.quality_check_id,
+            t.trip_id,
+            t.trip_code,
+            tt.type_name AS train_type,
+            ds.source_name,
+            q.has_missing_values,
+            q.has_time_error,
+            q.is_duplicate,
+            q.quality_score,
+            q.error_message,
+            q.check_date
+        FROM quality_check q
+        JOIN trip t
+            ON q.trip_id = t.trip_id
+        JOIN train_type tt
+            ON t.train_type_id = tt.train_type_id
+        JOIN data_source ds
+            ON t.data_source_id = ds.data_source_id
+        {where_clause}
+        ORDER BY q.quality_score ASC, t.trip_id
+        LIMIT %s;
+    """
+
+    params.append(limit)
+    return run_query(query, tuple(params))
+
+
+def load_trips(selected_train_type: str = "Tous", selected_source_id: Optional[int] = None, departure_city: str = "", arrival_city: str = "", limit: int = 100) -> pd.DataFrame:
+    """
+    Charge les trajets affichés dans le tableau d'exploration.
+
+    Les filtres de la barre latérale et les champs ville de départ / ville
+    d'arrivée sont appliqués ici.
+    """
+    conditions = []
+    params = []
+
+    if selected_train_type != "Tous":
+        conditions.append("LOWER(tt.type_name) = LOWER(%s)")
+        params.append(selected_train_type)
+
+    if selected_source_id is not None:
+        conditions.append("ds.data_source_id = %s")
+        params.append(selected_source_id)
+
+    if departure_city.strip():
+        conditions.append("LOWER(dep_city.city_name) LIKE LOWER(%s)")
+        params.append(f"%{departure_city.strip()}%")
+
+    if arrival_city.strip():
+        conditions.append("LOWER(arr_city.city_name) LIKE LOWER(%s)")
+        params.append(f"%{arrival_city.strip()}%")
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            t.trip_id,
+            t.trip_code,
+            tt.type_name AS train_type,
+            ds.source_name,
+            dep_station.station_name AS departure_station,
+            dep_city.city_name AS departure_city,
+            arr_station.station_name AS arrival_station,
+            arr_city.city_name AS arrival_city,
+            o.operator_name,
+            t.service_date,
+            t.departure_time,
+            t.arrival_time,
+            t.duration_minutes,
+            q.quality_score,
+            q.error_message
+        FROM trip t
+        JOIN train_type tt
+            ON t.train_type_id = tt.train_type_id
+        JOIN data_source ds
+            ON t.data_source_id = ds.data_source_id
+        JOIN route r
+            ON t.route_id = r.route_id
+        JOIN "operator" o
+            ON r.operator_id = o.operator_id
+        JOIN station dep_station
+            ON r.departure_station_id = dep_station.station_id
+        JOIN city dep_city
+            ON dep_station.city_id = dep_city.city_id
+        JOIN station arr_station
+            ON r.arrival_station_id = arr_station.station_id
+        JOIN city arr_city
+            ON arr_station.city_id = arr_city.city_id
+        LEFT JOIN quality_check q
+            ON t.trip_id = q.trip_id
+        {where_clause}
+        ORDER BY t.trip_id
+        LIMIT %s;
+    """
+    params.append(limit)
+    return run_query(query, tuple(params))
+
+
+def load_route_network(limit: int = 25) -> pd.DataFrame:
+    """
+    Charge les connexions les plus fréquentes entre villes.
+
+    Chaque ligne représente une relation départ-arrivée et le nombre de trajets
+    associés. Le résultat sert à construire le graphe de réseau.
+    """
+    return run_query("""
+        SELECT
+            dep_city.city_name AS source_city,
+            arr_city.city_name AS target_city,
+            COUNT(t.trip_id) AS total_trips
+        FROM trip t
+        JOIN route r
+            ON t.route_id = r.route_id
+        JOIN station dep_station
+            ON r.departure_station_id = dep_station.station_id
+        JOIN city dep_city
+            ON dep_station.city_id = dep_city.city_id
+        JOIN station arr_station
+            ON r.arrival_station_id = arr_station.station_id
+        JOIN city arr_city
+            ON arr_station.city_id = arr_city.city_id
+        GROUP BY dep_city.city_name, arr_city.city_name
+        ORDER BY total_trips DESC
+        LIMIT %s;
+    """, (limit,))
+
+
+def prepare_numeric_column(df: pd.DataFrame, column: str) -> pd.DataFrame:
+    """
+    Convertit une colonne en valeur numérique.
+
+    Cette étape évite les erreurs Plotly lorsque les volumes arrivent sous forme
+    de texte depuis PostgreSQL.
+    """
+    df = df.copy()
+    if column in df.columns:
+        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
+    return df
+
+
+def apply_pro_layout(fig, height: int = 620):
+    """
+    Applique une mise en forme commune à tous les graphiques Plotly.
+
+    L'objectif est d'avoir une identité visuelle cohérente sur tout le dashboard.
+    """
+    fig.update_layout(
+        template="plotly_white",
+        height=height,
+        margin=dict(l=40, r=40, t=85, b=55),
+        title=dict(x=0.02, xanchor="left", font=dict(size=22)),
+        font=dict(size=13),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        hoverlabel=dict(font_size=13),
+    )
+    return fig
+
+
+def create_horizontal_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str, height: int = 620):
+    """
+    Crée un histogramme horizontal à partir d'un DataFrame.
+
+    Cette fonction est utilisée pour comparer des volumes : sources, types de
+    train, pays ou opérateurs.
+    """
+    df = df.copy()
+
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title=title,
+            height=height,
+            annotations=[
+                dict(
+                    text="Aucune donnée disponible",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=18)
+                )
+            ]
+        )
+        return apply_pro_layout(fig, height=height)
+
+    df[x_col] = pd.to_numeric(df[x_col], errors="coerce").fillna(0)
+    df = df[df[x_col] > 0]
+
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title=title,
+            height=height,
+            annotations=[
+                dict(
+                    text="Aucune valeur positive à afficher",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=18)
+                )
+            ]
+        )
+        return apply_pro_layout(fig, height=height)
+
+    df = df.sort_values(x_col, ascending=True)
+
+    fig = px.bar(
+        df,
+        x=x_col,
+        y=y_col,
+        orientation="h",
+        text=x_col,
+        title=title,
+        labels={
+            x_col: "Volume",
+            y_col: ""
+        }
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:,.0f}",
+        textposition="outside",
+        marker_line_width=0
+    )
+
+    fig.update_xaxes(
+        type="linear",
+        title="Volume",
+        showgrid=True,
+        gridcolor="#EEF2F7",
+        rangemode="tozero"
+    )
+
+    fig.update_yaxes(
+        showgrid=False
+    )
+
+    return apply_pro_layout(fig, height=height)
+
+
+def create_log_source_bar_chart(df: pd.DataFrame, height: int = 560):
+    """
+    Crée un histogramme horizontal avec une échelle logarithmique.
+
+    Cette fonction n'est pas utilisée dans la version actuelle du dashboard, mais
+    elle reste disponible si l'on veut mieux visualiser des volumes très déséquilibrés.
+    """
+    df = prepare_numeric_column(df, "total_trips")
+    df = df.sort_values("total_trips", ascending=True)
+
+    fig = px.bar(
+        df,
+        x="total_trips",
+        y="source_name",
+        orientation="h",
+        text="total_trips",
+        title="Histogramme horizontal logarithmique — trajets par source",
+        labels={
+            "total_trips": "Volume de trajets, échelle logarithmique",
+            "source_name": "Source de données"
+        },
+        hover_data=["source_format"]
+    )
+    fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", marker_line_width=0)
+    fig.update_xaxes(type="log", showgrid=True, gridcolor="#EEF2F7")
+    fig.update_yaxes(showgrid=False)
+    return apply_pro_layout(fig, height=height)
+
+
+def create_train_type_share_chart(df: pd.DataFrame, height: int = 560):
+    """
+    Crée un graphique enrichi pour comparer les trains de jour et de nuit.
+
+    Le graphique affiche à la fois le nombre de trajets et le pourcentage associé.
+    """
+    df = prepare_numeric_column(df, "total_trips")
+    df = prepare_numeric_column(df, "percentage")
+    df = df.sort_values("total_trips", ascending=True)
+    df["label"] = df.apply(
+        lambda row: f"{int(row['total_trips']):,} trajets · {row['percentage']:.2f} %".replace(",", " "),
+        axis=1
+    )
+
+    fig = px.bar(
+        df,
+        x="total_trips",
+        y="type_name",
+        orientation="h",
+        text="label",
+        title="Répartition séparée — trains de jour vs trains de nuit",
+        labels={
+            "total_trips": "Nombre de trajets",
+            "type_name": "Type de train"
+        }
+    )
+    fig.update_traces(textposition="outside", marker_line_width=0)
+    fig.update_xaxes(showgrid=True, gridcolor="#EEF2F7")
+    fig.update_yaxes(showgrid=False)
+    return apply_pro_layout(fig, height=height)
+
+
+def create_sunburst_chart(df: pd.DataFrame, height: int = 680):
+    """
+    Crée un diagramme Sunburst source -> type de train.
+
+    Le centre représente les sources de données et l'anneau extérieur représente
+    les types de train associés à chaque source.
+    """
+    df = prepare_numeric_column(df, "total_trips")
+
+    source_colors = {
+        "SNCF GTFS": "#2563EB",
+        "Back-on-Track Night Train Data": "#F97316",
+        "European Sleeper Timetable": "#10B981",
+    }
+
+    fig = px.sunburst(
+        df,
+        path=["source_name", "type_name"],
+        values="total_trips",
+        color="source_name",
+        color_discrete_map=source_colors,
+        title="Répartition hiérarchique : Source → Type de train"
+    )
+
+    fig.update_layout(
+        showlegend=True,
+        legend=dict(
+            title="Source de données",
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="left",
+            x=1.02,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor="#E5E7EB",
+            borderwidth=1
+        ),
+        margin=dict(l=40, r=260, t=85, b=55)
+    )
+
+    return apply_pro_layout(fig, height=height)
+
+def create_co2_comparison_chart(df: pd.DataFrame, height: int = 620):
+    """
+    Crée un graphique comparant les émissions estimées du train
+    avec les émissions équivalentes d'un trajet en avion.
+
+    Le graphique permet de visualiser l'écart entre les deux scénarios
+    pour les trains de jour et les trains de nuit.
+    """
+    df = df.copy()
+
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Comparaison CO₂ estimée : train vs avion",
+            height=height,
+            annotations=[
+                dict(
+                    text="Aucune donnée CO₂ disponible",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=18)
+                )
+            ]
+        )
+        return apply_pro_layout(fig, height=height)
+
+    df["train_co2_kg"] = pd.to_numeric(df["train_co2_kg"], errors="coerce").fillna(0)
+    df["plane_co2_kg"] = pd.to_numeric(df["plane_co2_kg"], errors="coerce").fillna(0)
+
+    melted_df = df.melt(
+        id_vars=["type_name"],
+        value_vars=["train_co2_kg", "plane_co2_kg"],
+        var_name="scenario",
+        value_name="co2_kg"
+    )
+
+    melted_df["scenario"] = melted_df["scenario"].replace({
+        "train_co2_kg": "Émissions estimées en train",
+        "plane_co2_kg": "Émissions équivalentes en avion"
+    })
+
+    fig = px.bar(
+        melted_df,
+        x="type_name",
+        y="co2_kg",
+        color="scenario",
+        barmode="group",
+        text="co2_kg",
+        title="Comparaison CO₂ estimée : train vs avion",
+        labels={
+            "type_name": "Type de train",
+            "co2_kg": "Émissions estimées, kg CO₂",
+            "scenario": "Scénario"
+        }
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:,.0f} kg",
+        textposition="outside"
+    )
+
+    fig.update_yaxes(
+        title="Émissions estimées, kg CO₂",
+        showgrid=True,
+        gridcolor="#EEF2F7"
+    )
+
+    fig.update_xaxes(
+        title="Type de train"
+    )
+
+    return apply_pro_layout(fig, height=height)
+
+
+def create_operator_data_volume_chart(df: pd.DataFrame, height: int = 620):
+    """
+    Crée un graphique montrant le volume de données collectées par opérateur.
+
+    Le volume total correspond au nombre de trajets + au nombre d'arrêts.
+    """
+    df = df.copy()
+
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Volume de données collectées par opérateur",
+            height=height,
+            annotations=[
+                dict(
+                    text="Aucune donnée disponible",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=18)
+                )
+            ]
+        )
+        return apply_pro_layout(fig, height=height)
+
+    df["total_records"] = pd.to_numeric(
+        df["total_records"],
+        errors="coerce"
+    ).fillna(0)
+
+    df = df.sort_values("total_records", ascending=True)
+
+    fig = px.bar(
+        df,
+        x="total_records",
+        y="operator_name",
+        orientation="h",
+        text="total_records",
+        title="Volume de données collectées par opérateur",
+        labels={
+            "operator_name": "Opérateur",
+            "total_records": "Volume de données collectées"
+        },
+        hover_data={
+            "total_trips": True,
+            "total_stops": True,
+            "total_records": True,
+            "operator_name": False,
+        }
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:,.0f}",
+        textposition="outside"
+    )
+
+    fig.update_xaxes(
+        title="Nombre total d'enregistrements",
+        showgrid=True,
+        gridcolor="#EEF2F7"
+    )
+
+    fig.update_yaxes(
+        title="Opérateur"
+    )
+
+    return apply_pro_layout(fig, height=height)
+
+
+def create_missing_values_rate_chart(df: pd.DataFrame, height: int = 650):
+    """
+    Crée un graphique affichant les colonnes avec le plus fort taux
+    de valeurs manquantes dans la base.
+
+    Cette visualisation permet d'identifier rapidement les champs
+    qui nécessitent une attention particulière dans le contrôle qualité.
+    """
+    df = df.copy()
+
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Taux de valeurs manquantes par champ",
+            height=height,
+            annotations=[
+                dict(
+                    text="Aucune donnée disponible",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=18)
+                )
+            ]
+        )
+        return apply_pro_layout(fig, height=height)
+
+    df = df[df["missing_rows"] > 0].copy()
+
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Taux de valeurs manquantes par champ",
+            height=height,
+            annotations=[
+                dict(
+                    text="Aucune valeur manquante détectée dans les tables analysées",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(size=18)
+                )
+            ]
+        )
+        return apply_pro_layout(fig, height=height)
+
+    df["field_label"] = df["table_name"] + "." + df["column_name"]
+
+    df["missing_rate_pct"] = pd.to_numeric(
+        df["missing_rate_pct"],
+        errors="coerce"
+    ).fillna(0)
+
+    df = df.sort_values("missing_rate_pct", ascending=False).head(20)
+    df = df.sort_values("missing_rate_pct", ascending=True)
+
+    fig = px.bar(
+        df,
+        x="missing_rate_pct",
+        y="field_label",
+        orientation="h",
+        text="missing_rate_pct",
+        title="Taux de valeurs manquantes par champ",
+        labels={
+            "field_label": "Champ analysé",
+            "missing_rate_pct": "Taux de valeurs manquantes (%)"
+        },
+        hover_data={
+            "table_name": True,
+            "column_name": True,
+            "total_rows": True,
+            "missing_rows": True,
+            "missing_rate_pct": True,
+            "field_label": False,
+        }
+    )
+
+    fig.update_traces(
+        texttemplate="%{text:.2f}%",
+        textposition="outside"
+    )
+
+    fig.update_xaxes(
+        title="Taux de valeurs manquantes (%)",
+        ticksuffix="%",
+        showgrid=True,
+        gridcolor="#EEF2F7"
+    )
+
+    fig.update_yaxes(
+        title="Champ"
+    )
+
+    return apply_pro_layout(fig, height=height)
+
+
+def create_quality_heatmap(df: pd.DataFrame, height: int = 560):
+    """
+    Crée une heatmap du score qualité moyen par source et type de train.
+
+    Cette visualisation est conservée pour une future page qualité.
+    """
+    pivot_df = df.pivot(index="source_name", columns="type_name", values="avg_quality_score").fillna(0)
+    fig = px.imshow(
+        pivot_df,
+        text_auto=True,
+        aspect="auto",
+        title="Heatmap du score qualité moyen : Source × Type de train",
+        labels=dict(x="Type de train", y="Source", color="Score qualité")
+    )
+    return apply_pro_layout(fig, height=height)
+
+
+def create_radar_chart(df: pd.DataFrame, height: int = 680):
+    """
+    Crée un diagramme radar pour comparer les indicateurs qualité par source.
+
+    Chaque axe du radar représente un aspect de la qualité : score moyen,
+    valeurs manquantes, erreurs horaires et doublons.
+    """
+    fig = go.Figure()
+
+    for _, row in df.iterrows():
+        categories = ["Score qualité", "Taux valeurs manquantes", "Taux erreurs horaires", "Taux doublons"]
+        values = [row["avg_quality_score"], row["missing_rate"], row["time_error_rate"], row["duplicate_rate"]]
+        categories_closed = categories + [categories[0]]
+        values_closed = values + [values[0]]
+
+        fig.add_trace(go.Scatterpolar(
+            r=values_closed,
+            theta=categories_closed,
+            fill="toself",
+            name=row["source_name"]
+        ))
+
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100], gridcolor="#E5E7EB")),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.22, xanchor="center", x=0.5),
+        title="Diagramme de Kiviat : comparaison qualité par source"
+    )
+    return apply_pro_layout(fig, height=height)
+
+
+def create_network_graph(df: pd.DataFrame, height: int = 760):
+    """
+    Crée un graphe de réseau entre villes.
+
+    Chaque ville est représentée par un nœud. Chaque lien représente une relation
+    ferroviaire entre deux villes. La taille des nœuds augmente avec le nombre de
+    connexions afin de faire ressortir les villes les plus centrales.
+    """
+    df = prepare_numeric_column(df, "total_trips")
+    G = nx.Graph()
+
+    for _, row in df.iterrows():
+        if row["source_city"] != row["target_city"]:
+            G.add_edge(row["source_city"], row["target_city"], weight=row["total_trips"])
+
+    pos = nx.spring_layout(G, seed=42, k=0.9)
+
+    edge_x = []
+    edge_y = []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1.2, color="#94A3B8"), hoverinfo="none", mode="lines")
+
+    node_x = []
+    node_y = []
+    node_text = []
+    node_size = []
+    for node in G.nodes():
+        x, y = pos[node]
+        degree = G.degree(node)
+        node_x.append(x)
+        node_y.append(y)
+        node_size.append(14 + degree * 4)
+        node_text.append(f"{node}<br>Connexions : {degree}")
+
+    node_trace = go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode="markers+text",
+        text=list(G.nodes()),
+        textposition="top center",
+        hovertext=node_text,
+        hoverinfo="text",
+        marker=dict(size=node_size, line=dict(width=1, color="#0F172A"))
+    )
+
+    fig = go.Figure(data=[edge_trace, node_trace])
+    fig.update_layout(
+        title="Graphe de réseau ferroviaire : connexions entre villes",
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False, visible=False),
+        yaxis=dict(showgrid=False, zeroline=False, visible=False),
+    )
+    return apply_pro_layout(fig, height=height)

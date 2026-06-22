@@ -1,0 +1,32 @@
+
+# Manipulation et analyse des données
+pandas
+
+# Téléchargement des sources externes
+requests
+
+# Scraping HTML, utilisé notamment pour Wikipedia
+beautifulsoup4
+
+# Connexion PostgreSQL depuis Python
+psycopg2-binary
+
+# API REST
+fastapi
+uvicorn[standard]
+
+# Dashboard interactif
+streamlit
+
+# Visualisations
+plotly
+networkx
+
+# Lecture du fichier .env
+python-dotenv
+
+# Enrichissement géographique local à partir des coordonnées
+reverse_geocoder
+
+# Gestion des codes pays ISO
+pycountry
