@@ -1,0 +1,17 @@
+feature,importance
+weekly_frequency,0.2658868963415753
+co2_train_kg,0.23673796779983264
+co2_saving_kg,0.1596674243268463
+co2_plane_kg,0.135867676653144
+distance_km,0.08531192732618997
+avg_duration_minutes,0.06263258115849203
+min_duration_minutes,0.03283688310021735
+max_duration_minutes,0.010800599166678311
+is_international,0.004198243005083039
+avg_num_stops,0.0036067361871307646
+daily_frequency_avg,0.0018781457287545985
+has_day_train,0.0005724366013450422
+has_night_train,2.482604710763089e-06
+avg_quality_score,0.0
+quality_issues_count,0.0
+co2_saving_percent,0.0

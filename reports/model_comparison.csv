@@ -1,0 +1,5 @@
+model,accuracy,precision_macro,recall_macro,f1_macro,f1_weighted
+gradient_boosting,1.0,1.0,1.0,1.0,1.0
+random_forest,0.9902,0.9738,0.9954,0.9842,0.9904
+decision_tree,0.9886,0.9781,0.982,0.98,0.9887
+logistic_regression,0.7545,0.7037,0.8744,0.7386,0.7667

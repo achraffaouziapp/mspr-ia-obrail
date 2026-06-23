@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException
-
+from api.prediction import router as prediction_router
 from api.database import execute_query
 
 
@@ -7,9 +7,13 @@ from api.database import execute_query
 # Les informations ci-dessous apparaissent dans la documentation interactive /docs.
 app = FastAPI(
     title="ObRail Europe API",
-    description="API REST permettant de consulter les données ferroviaires transformées et chargées dans PostgreSQL.",
+    description="API REST ObRail permettant de consulter les données ferroviaires transformées dans PostgreSQL et d’exposer le modèle IA de substitution avion-train.",
     version="1.0.0",
 )
+
+
+# Routes IA : /predict et /model-info
+app.include_router(prediction_router)
 
 
 @app.get("/")
@@ -23,7 +27,9 @@ def root():
     return {
         "message": "Bienvenue sur l'API ObRail Europe",
         "documentation": "/docs",
-        "status": "running"
+        "status": "running",
+        "prediction_endpoint": "/predict",
+        "model_info_endpoint": "/model-info"
     }
 
 
