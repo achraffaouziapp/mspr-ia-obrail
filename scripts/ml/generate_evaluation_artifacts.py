@@ -1,3 +1,9 @@
+"""Génération des artefacts d'évaluation du modèle IA ObRail.
+
+Ce script lit les métriques et le modèle sauvegardé, produit les graphiques d'évaluation,
+calcule l'importance des variables et génère un rapport Markdown exploitable dans le rapport projet.
+"""
+
 from pathlib import Path
 import json
 import pandas as pd
@@ -24,11 +30,13 @@ FIG_FEATURE_IMPORTANCE = FIGURES_DIR / "feature_importance.png"
 
 
 def load_metrics():
+    """Lit le fichier JSON contenant les métriques du modèle final."""
     with open(METRICS_PATH, "r", encoding="utf-8") as file:
         return json.load(file)
 
 
 def plot_model_comparison(comparison_df):
+    """Génère le graphique comparant les modèles selon le F1 macro."""
     comparison_df = comparison_df.sort_values("f1_macro", ascending=True)
 
     plt.figure(figsize=(8, 5))
@@ -43,6 +51,7 @@ def plot_model_comparison(comparison_df):
 
 
 def plot_confusion_matrix(metrics):
+    """Génère la matrice de confusion du modèle final sur le jeu de test."""
     labels = metrics["test_confusion_matrix"]["labels"]
     matrix = metrics["test_confusion_matrix"]["matrix"]
 
@@ -64,6 +73,7 @@ def plot_confusion_matrix(metrics):
 
 
 def compute_feature_importance(metrics):
+    """Calcule et exporte l'importance des variables du modèle final."""
     pipeline = joblib.load(MODEL_PATH)
     model = pipeline.named_steps["model"]
     feature_columns = metrics["feature_columns"]
@@ -95,6 +105,7 @@ def compute_feature_importance(metrics):
 
 
 def generate_markdown_report(metrics, comparison_df, importance_df):
+    """Construit le rapport d'évaluation Markdown à partir des métriques et figures."""
     best_model = metrics["best_model"]
     test_metrics = metrics["test_metrics"]
     report = metrics["test_classification_report"]
@@ -188,6 +199,7 @@ def generate_markdown_report(metrics, comparison_df, importance_df):
 
 
 def main():
+    """Point d'entrée du script lorsqu'il est exécuté en ligne de commande."""
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 

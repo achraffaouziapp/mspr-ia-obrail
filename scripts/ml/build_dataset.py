@@ -1,3 +1,10 @@
+"""Construction du dataset IA de substitution avion-train.
+
+Ce script transforme les tables harmonisées issues de l'ETL en un dataset plat orienté machine learning.
+Il agrège les trajets par liaison, calcule les distances, fréquences, durées, arrêts, scores qualité,
+indicateurs CO2, score métier et cible finale substitution_potential.
+"""
+
 from pathlib import Path
 import json
 import math
@@ -33,6 +40,7 @@ REQUIRED_FILES = {
 
 
 def read_csv_table(name: str) -> pd.DataFrame:
+    """Charge une table CSV issue de data/processed/ et normalise les noms de colonnes."""
     file_name = REQUIRED_FILES[name]
     path = PROCESSED_DIR / file_name
 
@@ -45,10 +53,12 @@ def read_csv_table(name: str) -> pd.DataFrame:
 
 
 def to_numeric(series: pd.Series) -> pd.Series:
+    """Convertit une série pandas en valeurs numériques en remplaçant les erreurs par NaN."""
     return pd.to_numeric(series, errors="coerce")
 
 
 def haversine_distance_km(lat1, lon1, lat2, lon2):
+    """Calcule la distance géographique entre deux coordonnées GPS avec la formule de Haversine."""
     if pd.isna(lat1) or pd.isna(lon1) or pd.isna(lat2) or pd.isna(lon2):
         return None
 
@@ -72,6 +82,7 @@ def haversine_distance_km(lat1, lon1, lat2, lon2):
 
 
 def parse_time_to_minutes(value, day_offset=0):
+    """Convertit une heure au format texte en nombre total de minutes, avec gestion du décalage jour."""
     if pd.isna(value):
         return None
 
@@ -92,6 +103,7 @@ def parse_time_to_minutes(value, day_offset=0):
 
 
 def compute_duration_minutes(row):
+    """Calcule la durée d'un trajet en minutes à partir de la durée existante ou des horaires."""
     existing_duration = pd.to_numeric(row.get("duration_minutes"), errors="coerce")
     if pd.notna(existing_duration) and existing_duration > 0:
         return float(existing_duration)
@@ -118,6 +130,7 @@ def compute_duration_minutes(row):
 
 
 def build_station_dimension(station, city, country):
+    """Construit une dimension gare enrichie avec ville, pays et coordonnées GPS."""
     station = station.copy()
     city = city.copy()
     country = country.copy()
@@ -146,6 +159,7 @@ def build_station_dimension(station, city, country):
 
 
 def build_route_base(route, station_dim, operator):
+    """Construit la base des liaisons en ajoutant gares, pays, opérateur, distance et indicateur international."""
     route = route.copy()
     operator = operator.copy()
 
@@ -192,6 +206,7 @@ def build_route_base(route, station_dim, operator):
 
 
 def build_trip_aggregation(trip, train_type):
+    """Agrège les trajets par route pour calculer durées, fréquences et types de train."""
     trip = trip.copy()
     train_type = train_type.copy()
 
@@ -232,6 +247,7 @@ def build_trip_aggregation(trip, train_type):
     base_agg = base_agg.merge(type_mode, on="route_id", how="left")
 
     def compute_weekly_frequency(row):
+        """Fonction compute_weekly_frequency utilisée dans le pipeline ObRail."""
         trip_count = row["trip_count"]
 
         first_date = row["first_service_date"]
@@ -269,6 +285,7 @@ def build_trip_aggregation(trip, train_type):
 
 
 def build_stops_aggregation(trip, trip_stop):
+    """Agrège les arrêts pour calculer le nombre moyen, minimum et maximum d'arrêts intermédiaires."""
     trip = trip[["trip_id", "route_id"]].copy()
     trip_stop = trip_stop.copy()
 
@@ -301,6 +318,7 @@ def build_stops_aggregation(trip, trip_stop):
 
 
 def build_quality_aggregation(trip, quality_check):
+    """Agrège les contrôles qualité par route afin d'obtenir un score moyen et le nombre d'anomalies."""
     trip = trip[["trip_id", "route_id"]].copy()
     quality_check = quality_check.copy()
 
@@ -348,6 +366,7 @@ def build_quality_aggregation(trip, quality_check):
 
 
 def add_environmental_features(dataset):
+    """Ajoute les estimations CO2 train/avion et le gain environnemental associé."""
     dataset = dataset.copy()
 
     estimated_train_co2 = dataset["distance_km"] * DEFAULT_TRAIN_CO2_KG_PER_KM
@@ -360,7 +379,7 @@ def add_environmental_features(dataset):
     dataset["co2_saving_kg"] = dataset["co2_plane_kg"] - dataset["co2_train_kg"]
 
     dataset["co2_saving_percent"] = (
-    dataset["co2_saving_kg"] / dataset["co2_plane_kg"].replace(0, pd.NA)
+        dataset["co2_saving_kg"] / dataset["co2_plane_kg"].replace(0, pd.NA)
     ) * 100
 
     dataset["co2_saving_percent"] = dataset["co2_saving_percent"].fillna(0)
@@ -377,6 +396,7 @@ def add_environmental_features(dataset):
 
 
 def compute_substitution_score(row):
+    """Calcule le score métier qui synthétise le potentiel de substitution avion-train."""
     score = 0
 
     distance = row.get("distance_km")
@@ -454,6 +474,7 @@ def compute_substitution_score(row):
 
 
 def create_target_from_score(score):
+    """Transforme le score métier en classe cible : faible, moyen ou fort."""
     if score >= 70:
         return "fort"
     if score >= 45:
@@ -462,6 +483,7 @@ def create_target_from_score(score):
 
 
 def build_dataset():
+    """Orchestre l'ensemble des étapes de construction du dataset IA final."""
     MODELING_DIR.mkdir(parents=True, exist_ok=True)
 
     country = read_csv_table("country")

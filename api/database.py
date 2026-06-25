@@ -1,3 +1,10 @@
+"""Fonctions utilitaires de connexion PostgreSQL.
+
+Ce module centralise la configuration de la base, l'ouverture des connexions,
+l'exécution des requêtes SQL et la conversion des résultats PostgreSQL vers des objets JSON.
+Cela évite de dupliquer le code de connexion dans toutes les routes de l'API.
+"""
+
 import os
 from decimal import Decimal
 from datetime import date, datetime, time

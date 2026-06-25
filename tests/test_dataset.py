@@ -1,3 +1,9 @@
+"""Tests automatisés de qualité du dataset IA.
+
+Ces tests vérifient la présence des fichiers, les colonnes obligatoires, l'absence de valeurs critiques
+manquantes, la positivité des distances/durées/fréquences et la présence des trois classes cibles.
+"""
+
 from pathlib import Path
 import json
 import pandas as pd
@@ -38,14 +44,17 @@ REQUIRED_COLUMNS = [
 
 
 def test_dataset_file_exists():
+    """Vérifie que le dataset IA final existe."""
     assert DATASET_PATH.exists(), f"Dataset introuvable : {DATASET_PATH}"
 
 
 def test_dataset_metadata_exists():
+    """Vérifie que les métadonnées du dataset existent."""
     assert METADATA_PATH.exists(), f"Métadonnées introuvables : {METADATA_PATH}"
 
 
 def test_dataset_has_required_columns():
+    """Vérifie que toutes les colonnes indispensables sont présentes."""
     df = pd.read_csv(DATASET_PATH)
 
     missing_columns = [
@@ -56,6 +65,7 @@ def test_dataset_has_required_columns():
 
 
 def test_dataset_is_not_empty():
+    """Vérifie que le dataset contient des lignes et suffisamment de colonnes."""
     df = pd.read_csv(DATASET_PATH)
 
     assert len(df) > 0, "Le dataset est vide"
@@ -63,6 +73,7 @@ def test_dataset_is_not_empty():
 
 
 def test_dataset_has_no_missing_values_on_required_columns():
+    """Vérifie l'absence de valeurs manquantes sur les colonnes critiques."""
     df = pd.read_csv(DATASET_PATH)
 
     missing_values = df[REQUIRED_COLUMNS].isna().sum()
@@ -72,6 +83,7 @@ def test_dataset_has_no_missing_values_on_required_columns():
 
 
 def test_numeric_business_values_are_positive():
+    """Vérifie que distance, durée et fréquence sont strictement positives."""
     df = pd.read_csv(DATASET_PATH)
 
     assert (df["distance_km"] > 0).all(), "Certaines distances sont nulles ou négatives"
@@ -80,6 +92,7 @@ def test_numeric_business_values_are_positive():
 
 
 def test_target_contains_expected_classes():
+    """Vérifie que les trois classes cibles sont présentes."""
     df = pd.read_csv(DATASET_PATH)
 
     expected_classes = {"faible", "moyen", "fort"}
@@ -91,6 +104,7 @@ def test_target_contains_expected_classes():
 
 
 def test_each_target_class_has_enough_rows():
+    """Vérifie qu'aucune classe cible n'est vide."""
     df = pd.read_csv(DATASET_PATH)
 
     class_counts = df[TARGET_COLUMN].value_counts().to_dict()
@@ -101,6 +115,7 @@ def test_each_target_class_has_enough_rows():
 
 
 def test_train_validation_test_files_exist():
+    """Vérifie que les fichiers train, validation et test existent."""
     assert TRAIN_PATH.exists(), f"train.csv introuvable : {TRAIN_PATH}"
     assert VALIDATION_PATH.exists(), f"validation.csv introuvable : {VALIDATION_PATH}"
     assert TEST_PATH.exists(), f"test.csv introuvable : {TEST_PATH}"
@@ -108,6 +123,7 @@ def test_train_validation_test_files_exist():
 
 
 def test_train_validation_test_are_not_empty():
+    """Vérifie que les jeux train, validation et test ne sont pas vides."""
     train_df = pd.read_csv(TRAIN_PATH)
     validation_df = pd.read_csv(VALIDATION_PATH)
     test_df = pd.read_csv(TEST_PATH)
@@ -118,6 +134,7 @@ def test_train_validation_test_are_not_empty():
 
 
 def test_split_preserves_target_classes():
+    """Vérifie que chaque split conserve les trois classes cibles."""
     train_df = pd.read_csv(TRAIN_PATH)
     validation_df = pd.read_csv(VALIDATION_PATH)
     test_df = pd.read_csv(TEST_PATH)
@@ -130,6 +147,7 @@ def test_split_preserves_target_classes():
 
 
 def test_metadata_target_distribution_matches_dataset():
+    """Vérifie que la distribution de cible du metadata correspond au dataset."""
     df = pd.read_csv(DATASET_PATH)
 
     with open(METADATA_PATH, "r", encoding="utf-8") as file:

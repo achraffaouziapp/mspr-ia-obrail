@@ -1,3 +1,10 @@
+"""Application Streamlit du dashboard ObRail.
+
+Ce fichier organise l'interface utilisateur : mise en page, filtres, onglets,
+indicateurs globaux, visualisations et tableaux d'exploration des trajets ferroviaires.
+La logique de récupération des données et de création des graphiques est déportée dans visualisation.py.
+"""
+
 import streamlit as st
 
 from visualisation import (

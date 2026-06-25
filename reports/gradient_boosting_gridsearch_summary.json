@@ -1,0 +1,27 @@
+{
+    "best_params": {
+        "classifier__learning_rate": 0.1,
+        "classifier__max_depth": 3,
+        "classifier__n_estimators": 150
+    },
+    "best_cv_f1_macro": 0.9787,
+    "validation_metrics": {
+        "accuracy": 1.0,
+        "precision_macro": 1.0,
+        "recall_macro": 1.0,
+        "f1_macro": 1.0,
+        "precision_weighted": 1.0,
+        "recall_weighted": 1.0,
+        "f1_weighted": 1.0
+    },
+    "test_metrics": {
+        "accuracy": 0.9968,
+        "precision_macro": 0.9943,
+        "recall_macro": 0.9943,
+        "f1_macro": 0.9943,
+        "precision_weighted": 0.9968,
+        "recall_weighted": 0.9968,
+        "f1_weighted": 0.9968
+    },
+    "note": "GridSearchCV réalisé sur le Gradient Boosting afin de couvrir la recherche d'hyperparamètres. La variable substitution_score reste exclue des variables d'entrée."
+}

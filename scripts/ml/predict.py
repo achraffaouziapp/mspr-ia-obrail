@@ -1,3 +1,9 @@
+"""Script de prédiction locale pour le modèle IA ObRail.
+
+Ce script permet de tester le modèle sans lancer l'API. Il charge le modèle sauvegardé,
+valide les variables d'entrée, réalise une prédiction et sauvegarde le résultat dans data/predictions.
+"""
+
 from pathlib import Path
 import argparse
 import json
@@ -37,6 +43,7 @@ DEFAULT_SAMPLE = {
 
 
 def load_feature_columns():
+    """Charge la liste des variables attendues par le modèle depuis model_metrics.json."""
     if not METRICS_PATH.exists():
         raise FileNotFoundError(f"Fichier métriques introuvable : {METRICS_PATH}")
 
@@ -52,6 +59,7 @@ def load_feature_columns():
 
 
 def load_model():
+    """Charge le modèle joblib sauvegardé dans le dossier models/."""
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"Modèle introuvable : {MODEL_PATH}")
 
@@ -59,6 +67,7 @@ def load_model():
 
 
 def load_input_data(input_json):
+    """Charge les données d'entrée depuis un fichier JSON, une chaîne JSON ou l'exemple par défaut."""
     if input_json is None:
         return DEFAULT_SAMPLE
 
@@ -86,6 +95,7 @@ def load_input_data(input_json):
 
 
 def validate_input(input_data, feature_columns):
+    """Vérifie que toutes les variables nécessaires sont présentes et construit le DataFrame de prédiction."""
     missing_columns = [
         column for column in feature_columns if column not in input_data
     ]
@@ -102,6 +112,11 @@ def validate_input(input_data, feature_columns):
 
 
 def predict(input_data):
+    """Réalise une prédiction locale à partir d'un dictionnaire de variables.
+    
+    La fonction charge le modèle, vérifie les variables attendues, applique la prédiction
+    et retourne la classe prédite avec les probabilités si le modèle les fournit.
+    """
     model = load_model()
     feature_columns = load_feature_columns()
 
@@ -129,6 +144,7 @@ def predict(input_data):
 
 
 def main():
+    """Point d'entrée du script lorsqu'il est exécuté en ligne de commande."""
     parser = argparse.ArgumentParser(
         description="Script de prédiction locale pour le modèle ObRail."
     )

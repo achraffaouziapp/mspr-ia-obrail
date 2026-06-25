@@ -1,3 +1,9 @@
+"""Fonctions de chargement de données et de création de graphiques pour le dashboard Streamlit.
+
+Le fichier contient les requêtes SQL utilisées par le dashboard ainsi que les fonctions Plotly
+permettant de visualiser les volumes, la qualité, le réseau ferroviaire et les indicateurs CO2.
+"""
+
 import os
 from pathlib import Path
 from typing import Optional

@@ -1,3 +1,9 @@
+"""Séparation du dataset IA en jeux d'entraînement, validation et test.
+
+La séparation est stratifiée afin de conserver les proportions des classes faible, moyen et fort
+dans chaque jeu. Cette étape garantit une évaluation plus fiable du modèle final.
+"""
+
 from pathlib import Path
 import json
 import pandas as pd
@@ -20,6 +26,7 @@ RANDOM_STATE = 42
 
 
 def split_dataset():
+    """Crée les jeux train, validation et test avec une stratification sur la cible."""
     if not INPUT_DATASET.exists():
         raise FileNotFoundError(f"Dataset introuvable : {INPUT_DATASET}")
 

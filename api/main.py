@@ -1,3 +1,10 @@
+"""Module FastAPI principal du projet ObRail.
+
+Ce fichier crée l'application REST, branche les routes IA (/predict et /model-info)
+et expose les routes de consultation des données ferroviaires stockées dans PostgreSQL.
+Il sert donc de point d'entrée backend pour le dashboard, les tests et la démonstration jury.
+"""
+
 from fastapi import FastAPI, Query, HTTPException
 from api.prediction import router as prediction_router
 from api.database import execute_query

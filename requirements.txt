@@ -1,3 +1,7 @@
+# Fichier des dépendances Python du projet ObRail.
+# Chaque bloc regroupe les bibliothèques par usage : données, API, dashboard, ML, notebooks et tests.
+# Installation recommandée : python -m pip install -r requirements.txt
+
 # Manipulation et analyse des données
 
 pandas

@@ -1,3 +1,9 @@
+"""Tests automatisés des endpoints IA FastAPI.
+
+Ces tests contrôlent /model-info, /predict, les réponses attendues de l'API et les erreurs de validation
+lorsqu'une valeur obligatoire est absente ou incohérente.
+"""
+
 from pathlib import Path
 import sys
 
@@ -34,6 +40,7 @@ VALID_PAYLOAD = {
 
 
 def test_model_info_endpoint_returns_model_metadata():
+    """Vérifie que /model-info retourne les métadonnées du modèle."""
     response = client.get("/model-info")
 
     assert response.status_code == 200
@@ -51,6 +58,7 @@ def test_model_info_endpoint_returns_model_metadata():
 
 
 def test_predict_endpoint_returns_valid_prediction():
+    """Vérifie que /predict retourne une prédiction valide pour un payload complet."""
     response = client.post("/predict", json=VALID_PAYLOAD)
 
     assert response.status_code == 200
@@ -68,6 +76,7 @@ def test_predict_endpoint_returns_valid_prediction():
 
 
 def test_predict_endpoint_default_business_case_is_fort():
+    """Vérifie que le cas métier de référence est prédit en fort par l'API."""
     response = client.post("/predict", json=VALID_PAYLOAD)
 
     assert response.status_code == 200
@@ -78,6 +87,7 @@ def test_predict_endpoint_default_business_case_is_fort():
 
 
 def test_predict_endpoint_rejects_invalid_distance():
+    """Vérifie que l'API refuse une distance invalide."""
     invalid_payload = VALID_PAYLOAD.copy()
     invalid_payload["distance_km"] = 0
 
@@ -87,6 +97,7 @@ def test_predict_endpoint_rejects_invalid_distance():
 
 
 def test_predict_endpoint_rejects_missing_required_field():
+    """Vérifie que l'API refuse une requête où une variable obligatoire est absente."""
     invalid_payload = VALID_PAYLOAD.copy()
     invalid_payload.pop("distance_km")
 

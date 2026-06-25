@@ -1,3 +1,10 @@
+"""Entraînement et comparaison des modèles de classification ObRail.
+
+Ce script entraîne plusieurs modèles, compare leurs performances sur validation,
+sélectionne le meilleur modèle selon le F1 macro, le réentraîne sur train + validation,
+l'évalue sur test et sauvegarde le modèle final avec ses métriques.
+"""
+
 from pathlib import Path
 import json
 import pandas as pd
@@ -63,6 +70,7 @@ FEATURE_COLUMNS = [
 
 
 def load_data():
+    """Charge les fichiers train, validation et test et vérifie les colonnes obligatoires."""
     train_df = pd.read_csv(TRAIN_PATH)
     validation_df = pd.read_csv(VALIDATION_PATH)
     test_df = pd.read_csv(TEST_PATH)
@@ -75,6 +83,7 @@ def load_data():
 
 
 def build_pipeline(model):
+    """Construit un pipeline scikit-learn composé d'un imputer, d'un scaler et d'un modèle."""
     return Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -85,6 +94,7 @@ def build_pipeline(model):
 
 
 def get_models():
+    """Déclare les modèles candidats comparés pendant l'entraînement."""
     return {
         "logistic_regression": build_pipeline(
             LogisticRegression(
@@ -122,6 +132,7 @@ def get_models():
 
 
 def compute_metrics(y_true, y_pred):
+    """Calcule les métriques principales utilisées pour comparer les modèles."""
     return {
         "accuracy": round(accuracy_score(y_true, y_pred), 4),
         "precision_macro": round(
@@ -140,6 +151,7 @@ def compute_metrics(y_true, y_pred):
 
 
 def train_and_compare_models(train_df, validation_df):
+    """Entraîne chaque modèle candidat et compare ses performances sur validation."""
     X_train = train_df[FEATURE_COLUMNS]
     y_train = train_df[TARGET_COLUMN]
 
@@ -178,6 +190,7 @@ def train_and_compare_models(train_df, validation_df):
 
 
 def retrain_best_model(best_model_name, train_df, validation_df):
+    """Réentraîne le meilleur modèle sur train + validation avant l'évaluation finale."""
     full_train_df = pd.concat([train_df, validation_df], ignore_index=True)
 
     X_full_train = full_train_df[FEATURE_COLUMNS]
@@ -198,6 +211,7 @@ def retrain_best_model(best_model_name, train_df, validation_df):
 
 
 def evaluate_on_test(best_pipeline, test_df):
+    """Évalue le modèle final sur le jeu de test séparé."""
     X_test = test_df[FEATURE_COLUMNS]
     y_test = test_df[TARGET_COLUMN]
 
@@ -218,6 +232,7 @@ def evaluate_on_test(best_pipeline, test_df):
 
 
 def main():
+    """Point d'entrée du script lorsqu'il est exécuté en ligne de commande."""
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 

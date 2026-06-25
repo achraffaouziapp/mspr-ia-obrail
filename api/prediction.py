@@ -1,3 +1,10 @@
+"""Routes FastAPI dédiées à la prédiction IA.
+
+Ce module charge le modèle sauvegardé, lit les métadonnées du modèle,
+valide les données reçues via Pydantic et retourne la classe prédite
+pour une liaison ferroviaire : faible, moyen ou fort potentiel de substitution avion-train.
+"""
+
 from pathlib import Path
 import json
 import pandas as pd
@@ -18,6 +25,11 @@ router = APIRouter(tags=["Prediction IA"])
 
 
 class PredictionInput(BaseModel):
+    """Schéma Pydantic des variables attendues par l'endpoint /predict.
+    
+    Chaque champ définit à la fois le type attendu et des contraintes simples
+    pour empêcher l'envoi de valeurs incohérentes à l'API.
+    """
     is_international: int = Field(..., ge=0, le=1)
     distance_km: float = Field(..., gt=0)
     weekly_frequency: float = Field(..., gt=0)
@@ -60,6 +72,11 @@ class PredictionInput(BaseModel):
 
 
 def load_model_and_metadata():
+    """Charge le modèle sauvegardé et les métadonnées associées.
+    
+    Cette fonction est appelée au démarrage de l'API. Elle vérifie que les fichiers existent,
+    charge le modèle joblib et récupère la liste des variables attendues par le modèle.
+    """
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"Modèle introuvable : {MODEL_PATH}")
 
@@ -92,6 +109,11 @@ else:
 
 @router.get("/model-info")
 def get_model_info():
+    """Retourne les informations principales du modèle chargé par l'API.
+    
+    L'endpoint est utile pour vérifier rapidement le modèle actif, les variables utilisées
+    et les métriques de test sans relancer un entraînement.
+    """
     if METRICS is None:
         raise HTTPException(
             status_code=500,
@@ -109,6 +131,11 @@ def get_model_info():
 
 @router.post("/predict")
 def predict(input_data: PredictionInput):
+    """Réalise une prédiction à partir des variables envoyées à l'API.
+    
+    Les données sont validées par Pydantic, replacées dans l'ordre attendu par le modèle,
+    puis utilisées pour produire une classe et, si disponible, des probabilités par classe.
+    """
     if MODEL is None or FEATURE_COLUMNS is None:
         raise HTTPException(
             status_code=500,
