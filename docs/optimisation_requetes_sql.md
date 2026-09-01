@@ -15,7 +15,7 @@ Les optimisations présentées ci-dessous permettent également de justifier les
 Les données métier sont réparties entre plusieurs entités : vendeurs, lives, clients, commentaires, paniers, commandes, paiements et produits. Une requête ne doit pas systématiquement joindre toutes les tables disponibles. Les jointures sont ajoutées uniquement lorsqu’une information provenant d’une autre table est nécessaire au résultat attendu.
 
 Par exemple, lorsqu’une extraction doit relier un live à son vendeur, la jointure entre les tables de lives et de vendeurs est nécessaire afin de récupérer les informations du vendeur associées au `seller_id`. À l’inverse, il n’est pas utile d’ajouter les tables de paiements ou de commentaires si la requête ne porte que sur les informations générales du live.
-
+x
 Cette approche permet :
 
 - de réduire le nombre de lignes intermédiaires produites ;
